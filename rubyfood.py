@@ -76,10 +76,104 @@ if "calc_results" not in st.session_state:
 tabs = st.tabs(["🍱 食物管理", "📊 碳水計算", "💉 胰島素紀錄"])
 
 # === 1. 食物管理 ===
-... (略)
+with tabs[0]:
+    st.header("🍱 食物管理")
+    st.subheader("新增或查詢食物")
+
+    with st.form("add_food_form"):
+        name = st.text_input("食物名稱")
+        unit = st.selectbox("單位", ["克(g)", "毫升(ml)"])
+        carb = st.text_input("每單位碳水化合物含量 (g)")
+        note = st.text_input("備註")
+        submitted = st.form_submit_button("✅ 新增 / 覆蓋")
+
+        if submitted:
+            if not name or not unit or not carb:
+                st.warning("請填寫完整資訊")
+            else:
+                try:
+                    carb_val = float(carb.replace(",", "."))
+                    matches = find_similar_foods(name)
+                    wb = load_workbook(FOOD_FILE)
+                    ws = wb.active
+                    updated = False
+                    if matches:
+                        for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
+                            if fuzz.partial_ratio(name, row[0].value) >= 80:
+                                ws.cell(i, 1, name)
+                                ws.cell(i, 2, unit)
+                                ws.cell(i, 3, carb_val)
+                                ws.cell(i, 4, note)
+                                updated = True
+                                break
+                    if not updated:
+                        ws.append([name, unit, carb_val, note])
+                    wb.save(FOOD_FILE)
+                    st.success("✅ 已儲存：{}".format("覆蓋" if updated else "新增"))
+                except:
+                    st.error("碳水值請輸入數字")
+
+    st.divider()
+    st.subheader("🔍 查詢 / 刪除食物")
+    keyword = st.text_input("查詢關鍵字")
+    if keyword:
+        results = find_similar_foods(keyword)
+        if results:
+            df = pd.DataFrame(results, columns=["食物名稱", "單位", "碳水(g)", "備註"])
+            st.dataframe(df, use_container_width=True)
+            selected = st.selectbox("選擇要刪除的項目", [r[0] for r in results])
+            if st.button("🗑️ 刪除選擇項目"):
+                wb = load_workbook(FOOD_FILE)
+                ws = wb.active
+                for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
+                    if row[0].value == selected:
+                        ws.delete_rows(i)
+                        wb.save(FOOD_FILE)
+                        st.success(f"已刪除：{selected}")
+                        break
+        else:
+            st.info("查無資料，請確認輸入內容或先新增食物")
 
 # === 2. 碳水計算 ===
-... (略)
+with tabs[1]:
+    st.header("📊 碳水化合物攝取計算")
+    st.subheader("查詢食物並輸入攝取量")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        keyword_calc = st.text_input("輸入食物名稱以查詢")
+    with col2:
+        search = st.button("🔍 查詢")
+
+    calc_matches = []
+    if search and keyword_calc:
+        calc_matches = find_similar_foods(keyword_calc)
+        if not calc_matches:
+            st.warning("查無資料，請確認輸入或先新增食物")
+
+    if calc_matches:
+        selected = st.selectbox("選擇食物項目", [f"{r[0]}｜每{r[1]} 含 {r[2]}g" for r in calc_matches])
+        amount = st.number_input("攝取量 (g/ml)", min_value=0.0, step=1.0)
+        if st.button("✅ 加入計算"):
+            idx = [f"{r[0]}｜每{r[1]} 含 {r[2]}g" for r in calc_matches].index(selected)
+            row = calc_matches[idx]
+            carb = round(float(row[2]) * amount, 2)
+            st.session_state.calc_results.append({"name": row[0], "amount": amount, "unit": row[1], "carb": carb})
+            st.success(f"已加入：{row[0]}｜{amount}{row[1]}｜碳水: {carb}g")
+
+    st.divider()
+    st.subheader("📋 已加入項目")
+    if st.session_state.calc_results:
+        df_calc = pd.DataFrame(st.session_state.calc_results)
+        df_calc.columns = ["食物", "攝取量", "單位", "碳水(g)"]
+        st.dataframe(df_calc, use_container_width=True)
+        total = sum([r["carb"] for r in st.session_state.calc_results])
+        st.metric("總碳水量 (g)", f"{round(total, 2)}")
+        if st.button("❌ 清除所有項目"):
+            st.session_state.calc_results.clear()
+            st.success("已清除")
+    else:
+        st.info("尚未加入任何食物項目")
 
 # === 3. 胰島素紀錄 ===
 with tabs[2]:
